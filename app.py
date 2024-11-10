@@ -1,16 +1,18 @@
 import sqlite3
 from fastapi import FastAPI
 import os
+from fastapi.responses import FileResponse
+import icalendar
+from datetime import datetime, timedelta
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def read_root():
     return {"Hello": "World"}
-
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: str = None):
-    return {"item_id": item_id, "q": q}
 
 @app.get("/reset")
 def reset():
@@ -53,3 +55,32 @@ def create_task(task: str, priority: int):
     conn.close()
     return {"task_id": task_id, "task": task, "priority": priority}
 
+@app.get("/calendar.ics")
+def read_calendar():
+    conn = sqlite3.connect('data/database.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tasks")
+    tasks = cursor.fetchall()
+    conn.close()
+
+    cal = icalendar.Calendar()
+    cal.add('prodid', '-//My Tasks Calendar//mxm.dk//')
+    cal.add('version', '2.0')
+
+    start_time = datetime.now().replace(hour=18, minute=0, second=0, microsecond=0)
+
+    for task in tasks:
+        event = icalendar.Event()
+        event.add('method', 'PUBLISH')
+        event.add('summary', task[1])
+        event.add('dtstart', start_time)
+        event.add('dtend', start_time + timedelta(hours=1))
+        event.add('priority', task[2])
+        event.add('uid', f'{task[0]}@mytasks')
+        cal.add_component(event)
+        start_time += timedelta(days=1)
+
+    f = open(os.path.join('data/calendar.ics'), 'wb')
+    f.write(cal.to_ical())
+    f.close()
+    return FileResponse('data/calendar.ics', filename='calendar.ics', headers={'Content-Disposition': 'attachment; filename="calendar.ics"'})
