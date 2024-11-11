@@ -5,6 +5,11 @@ from fastapi.responses import FileResponse
 import icalendar
 from datetime import datetime, timedelta
 from fastapi.staticfiles import StaticFiles
+import requests
+from fastapi import HTTPException
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI()
 
@@ -84,3 +89,113 @@ def read_calendar():
     f.write(cal.to_ical())
     f.close()
     return FileResponse('data/calendar.ics', filename='calendar.ics', headers={'Content-Disposition': 'attachment; filename="calendar.ics"'})
+        
+@app.get("/calendar/events")
+def get_events():
+    access_token = os.getenv('OUTLOOK_ACCESS_TOKEN')
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Access token is missing")
+
+    url = "https://graph.microsoft.com/v1.0/me/calendarview?startdatetime=2024-11-10T22:08:43.325Z&enddatetime=2025-11-18T22:08:43.325Z&top=1000"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise HTTPException(status_code=response.status_code, detail=response.json())
+    
+@app.post("/calendar/event/")
+def create_event(summary: str, start_time: datetime, end_time: datetime, priority: int):
+    access_token = os.getenv('OUTLOOK_ACCESS_TOKEN')
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Access token is missing")
+
+    url = "https://graph.microsoft.com/v1.0/me/events/"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+    event_data = {
+        "subject": summary,
+        "start": {
+            "dateTime": start_time.isoformat(),
+            "timeZone": "UTC"
+        },
+        "end": {
+            "dateTime": end_time.isoformat(),
+            "timeZone": "UTC"
+        },
+        "importance": "high" if priority == 1 else "normal"
+    }
+
+    response = requests.post(url, headers=headers, json=event_data)
+    if response.status_code == 201:
+        return response.json()
+    else:
+        raise HTTPException(status_code=response.status_code, detail=response.json())
+    
+@app.post("/schedule/")
+def upload_calendar():
+    events=get_events()
+    tasks = get_uncompleted_tasks()
+    existing_event_summaries = [event['subject'] for event in events.get('value', [])]
+    new_tasks = [task for task in tasks if task not in existing_event_summaries]
+    print(len(tasks))
+    print(tasks)
+    print(len(events.get('value', [])))
+    print(len(existing_event_summaries))
+    print(existing_event_summaries)
+    print(len(new_tasks))
+    print(new_tasks)
+
+    busy_times = [(datetime.fromisoformat(event['start']['dateTime']), datetime.fromisoformat(event['end']['dateTime'])) for event in events.get('value', [])]
+    busy_times.sort()
+    for task in new_tasks:
+        free_start = datetime.now().replace(hour=datetime.now().hour+1, minute=0, second=0, microsecond=0)
+        free_end = free_start + timedelta(hours=1)
+
+        while any(start < free_end and end > free_start for start, end in busy_times):
+            free_start += timedelta(hours=1)
+            free_end = free_start + timedelta(hours=1)
+        create_event(task, free_start, free_end, 0)
+        busy_times.append((free_start, free_end))
+        
+    return {"new_tasks": new_tasks}
+
+def get_all_tasks():
+    access_token = os.getenv('OUTLOOK_ACCESS_TOKEN')
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Access token is missing")
+
+    url = "https://graph.microsoft.com/v1.0/me/todo/lists"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        lists = response.json().get('value', [])
+        tasks = []
+        for todo_list in lists:
+            list_id = todo_list['id']
+            tasks_url = f"https://graph.microsoft.com/v1.0/me/todo/lists/{list_id}/tasks"
+            tasks_response = requests.get(tasks_url, headers=headers)
+            if tasks_response.status_code == 200:
+                tasks.extend(tasks_response.json().get('value', []))
+            else:
+                raise HTTPException(status_code=tasks_response.status_code, detail=tasks_response.json())
+        return tasks
+    else:
+        raise HTTPException(status_code=response.status_code, detail=response.json())
+
+@app.get("/todo/")
+def get_uncompleted_tasks():
+    tasks=get_all_tasks()
+    incomplete_tasks = [task for task in tasks if task['status'] != 'completed']
+    return [task['title'] for task in incomplete_tasks]
+    # return incomplete_tasks
