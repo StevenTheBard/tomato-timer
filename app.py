@@ -138,32 +138,34 @@ def create_event(summary: str, start_time: datetime, end_time: datetime, priorit
     else:
         raise HTTPException(status_code=response.status_code, detail=response.json())
     
+def schedule_event(task, busy_times):
+    free_start = datetime.now().replace(hour=datetime.now().hour+1, minute=0, second=0, microsecond=0)
+    free_end = free_start + timedelta(hours=25)
+
+    while any(start < free_end and end > free_start for start, end in busy_times):
+        free_start += timedelta(minutes=30)
+        free_end = free_start + timedelta(minutes=25)
+    create_event(task, free_start, free_end, 0)
+    busy_times.append((free_start, free_end))
+    return busy_times
+
 @app.post("/schedule/")
 def upload_calendar():
     events=get_events()
-    tasks = get_uncompleted_tasks()
+    tasks=get_uncompleted_tasks()
+    # tasks = [task['title'] for task in get_uncompleted_tasks()]
     existing_event_summaries = [event['subject'] for event in events.get('value', [])]
-    new_tasks = [task for task in tasks if task not in existing_event_summaries]
-    print(len(tasks))
-    print(tasks)
-    print(len(events.get('value', [])))
-    print(len(existing_event_summaries))
-    print(existing_event_summaries)
-    print(len(new_tasks))
-    print(new_tasks)
-
+    new_tasks = [task for task in tasks if task["title"] not in existing_event_summaries]
+    
     busy_times = [(datetime.fromisoformat(event['start']['dateTime']), datetime.fromisoformat(event['end']['dateTime'])) for event in events.get('value', [])]
     busy_times.sort()
     for task in new_tasks:
-        free_start = datetime.now().replace(hour=datetime.now().hour+1, minute=0, second=0, microsecond=0)
-        free_end = free_start + timedelta(hours=1)
-
-        while any(start < free_end and end > free_start for start, end in busy_times):
-            free_start += timedelta(hours=1)
-            free_end = free_start + timedelta(hours=1)
-        create_event(task, free_start, free_end, 0)
-        busy_times.append((free_start, free_end))
-        
+        if task.get("checklistItems") and "h" in task["checklistItems"][0]["displayName"]:
+            hours=int(task["checklistItems"][0]["displayName"].replace("h", ""))
+            for _ in range(2*hours):
+                busy_times=schedule_event(task["title"], busy_times)        
+        else:
+            busy_times=schedule_event(task["title"], busy_times)        
     return {"new_tasks": new_tasks}
 
 def get_all_tasks():
@@ -176,8 +178,9 @@ def get_all_tasks():
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json'
     }
-
+    
     response = requests.get(url, headers=headers)
+    
     if response.status_code == 200:
         lists = response.json().get('value', [])
         tasks = []
@@ -197,5 +200,4 @@ def get_all_tasks():
 def get_uncompleted_tasks():
     tasks=get_all_tasks()
     incomplete_tasks = [task for task in tasks if task['status'] != 'completed']
-    return [task['title'] for task in incomplete_tasks]
-    # return incomplete_tasks
+    return incomplete_tasks
