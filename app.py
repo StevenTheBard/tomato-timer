@@ -96,7 +96,6 @@ def get_events():
     access_token = os.getenv('OUTLOOK_ACCESS_TOKEN')
     if not access_token:
         raise HTTPException(status_code=401, detail="Access token is missing")
-#2025-11-18T22:08:43.325Z
     url = "https://graph.microsoft.com/v1.0/me/calendarview?startdatetime="+str(datetime.now()-timedelta(days=1))+"&enddatetime="+str(datetime.now()+timedelta(days=8))+"&top=1000"
     headers = {
         'Authorization': f'Bearer {access_token}',
@@ -139,11 +138,15 @@ def create_event(summary: str, start_time: datetime, end_time: datetime, priorit
     else:
         raise HTTPException(status_code=response.status_code, detail=response.json())
     
+def in_awake_hours(free_start):
+    return CONFIG["wake_hours"][0] <= free_start.hour < CONFIG["wake_hours"][1]
+
 def schedule_event(task, busy_times):
     free_start = datetime.now().replace(hour=datetime.now().hour+1, minute=0, second=0, microsecond=0)
     free_end = free_start + timedelta(hours=25)
 
-    while any(start < free_end and end > free_start for start, end in busy_times):
+    global CONFIG
+    while any(start < free_end and end > free_start for start, end in busy_times) or not in_awake_hours(free_start):
         free_start += timedelta(minutes=30)
         free_end = free_start + timedelta(minutes=25)
     create_event(task, free_start, free_end, 0)
@@ -154,7 +157,6 @@ def schedule_event(task, busy_times):
 def upload_calendar():
     events=get_events()
     tasks=get_uncompleted_tasks()
-    # tasks = [task['title'] for task in get_uncompleted_tasks()]
     existing_event_summaries = [event['subject'] for event in events.get('value', [])]
     new_tasks = [task for task in tasks if task["title"] not in existing_event_summaries]
     
@@ -205,3 +207,16 @@ def get_uncompleted_tasks():
     incomplete_tasks = [task for task in tasks if task['status'] != 'completed']
     sorted_tasks = sorted(incomplete_tasks, key=lambda x: x['importance'], reverse=False)
     return sorted_tasks
+
+CONFIG = {"business_hours": [7, 18],"wake_hours": [5,21 ]}
+
+@app.post("/config/")
+def save_config(config: dict):
+    global CONFIG
+    CONFIG = config
+    return {"status": "config saved"}
+
+@app.get("/config/")
+def get_config():
+    global CONFIG
+    return CONFIG
