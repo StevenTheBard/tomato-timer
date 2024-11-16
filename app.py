@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 import requests
 from fastapi import HTTPException
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 
@@ -17,7 +18,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def read_root():
-    return {"Hello": "World"}
+    return {"Hello": datetime.now()}
 
 @app.get("/reset")
 def reset():
@@ -95,8 +96,8 @@ def get_events():
     access_token = os.getenv('OUTLOOK_ACCESS_TOKEN')
     if not access_token:
         raise HTTPException(status_code=401, detail="Access token is missing")
-
-    url = "https://graph.microsoft.com/v1.0/me/calendarview?startdatetime=2024-11-10T22:08:43.325Z&enddatetime=2025-11-18T22:08:43.325Z&top=1000"
+#2025-11-18T22:08:43.325Z
+    url = "https://graph.microsoft.com/v1.0/me/calendarview?startdatetime="+str(datetime.now()-timedelta(days=1))+"&enddatetime="+str(datetime.now()+timedelta(days=8))+"&top=1000"
     headers = {
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json'
@@ -160,13 +161,15 @@ def upload_calendar():
     busy_times = [(datetime.fromisoformat(event['start']['dateTime']), datetime.fromisoformat(event['end']['dateTime'])) for event in events.get('value', [])]
     busy_times.sort()
     for task in new_tasks:
-        if task.get("checklistItems") and "h" in task["checklistItems"][0]["displayName"]:
+        if task.get("checklistItems") and re.search(r'(\d+)h', task["checklistItems"][0]["displayName"]):
             hours=int(task["checklistItems"][0]["displayName"].replace("h", ""))
             for _ in range(2*hours):
                 busy_times=schedule_event(task["title"], busy_times)        
         else:
             busy_times=schedule_event(task["title"], busy_times)        
-    return {"new_tasks": new_tasks}
+        if busy_times[-1][0] > datetime.now()+timedelta(days=7):
+            break
+    return {"new_events": [t["title"] for t in  new_tasks]}
 
 def get_all_tasks():
     access_token = os.getenv('OUTLOOK_ACCESS_TOKEN')
@@ -200,4 +203,5 @@ def get_all_tasks():
 def get_uncompleted_tasks():
     tasks=get_all_tasks()
     incomplete_tasks = [task for task in tasks if task['status'] != 'completed']
-    return incomplete_tasks
+    sorted_tasks = sorted(incomplete_tasks, key=lambda x: x['importance'], reverse=False)
+    return sorted_tasks
