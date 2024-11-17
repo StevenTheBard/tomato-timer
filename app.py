@@ -190,13 +190,14 @@ def get_all_tasks():
         lists = response.json().get('value', [])
         tasks = []
         for todo_list in lists:
-            list_id = todo_list['id']
-            tasks_url = f"https://graph.microsoft.com/v1.0/me/todo/lists/{list_id}/tasks"
-            tasks_response = requests.get(tasks_url, headers=headers)
-            if tasks_response.status_code == 200:
-                tasks.extend(tasks_response.json().get('value', []))
-            else:
-                raise HTTPException(status_code=tasks_response.status_code, detail=tasks_response.json())
+            if  re.search(r'(\d+)-',todo_list['displayName']):
+                list_id = todo_list['id']
+                tasks_url = f"https://graph.microsoft.com/v1.0/me/todo/lists/{list_id}/tasks"
+                tasks_response = requests.get(tasks_url, headers=headers)
+                if tasks_response.status_code == 200:
+                    tasks.extend(tasks_response.json().get('value', []))
+                else:
+                    raise HTTPException(status_code=tasks_response.status_code, detail=tasks_response.json())
         return tasks
     else:
         raise HTTPException(status_code=response.status_code, detail=response.json())
