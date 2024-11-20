@@ -144,7 +144,7 @@ def create_event(summary: str, start_time: datetime, end_time: datetime, priorit
         raise HTTPException(status_code=response.status_code, detail=response.json())
     
 def in_awake_hours(free_start):
-    return CONFIG["wake_hours"][0] <= free_start.hour < CONFIG["wake_hours"][1]
+    return CONFIG["wake_hours"][0] <= free_start.hour <= CONFIG["wake_hours"][1]
 
 def schedule_event(task, busy_times):
     free_start = datetime.now().replace(hour=datetime.now().hour+1, minute=0, second=0, microsecond=0)
@@ -296,4 +296,8 @@ def reset_scheduled_events():
             deleted.append(event["subject"])
     return {"status": deleted}
 
-reset_scheduled_events()
+@app.post("/reschedule")
+def reschedule():
+    deleted=reset_scheduled_events()
+    scheduled=upload_calendar()
+    return {"deleted":deleted,"scheduled":scheduled}
