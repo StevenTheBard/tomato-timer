@@ -129,7 +129,12 @@ def create_event(summary: str, start_time: datetime, end_time: datetime, priorit
             "dateTime": end_time.isoformat(),
             "timeZone": "UTC"
         },
-        "importance": "high" if priority == 1 else "normal"
+        "importance": "high" if priority == 1 else "normal",
+        "body": {
+                "contentType": "html",
+                "content": "created by tomato-timer"
+            },
+        "bodyPreview": "created by tomato-timer"
     }
 
     response = requests.post(url, headers=headers, json=event_data)
@@ -155,16 +160,37 @@ def schedule_event(task, busy_times):
 
 @app.get("/order/")
 def order():
-    return [i["title"] for i in order_tasks(get_uncompleted_tasks())]
+    return [i["task"]["title"] for i in order_tasks(get_uncompleted_tasks(),verbose=True)]
 
-def order_tasks(tasks:dict):
-    ordered_tasks=[]
-    for priority in sorted(tasks.keys()):
-        tasks[priority] = sorted(tasks[priority], key=lambda x: (
-            x.get('importance', 'normal'), 
-            x.get('dueDateTime', {}).get('dateTime', (datetime.fromisoformat(x['lastModifiedDateTime']) + timedelta(days=15)).isoformat())
-        ))
-        ordered_tasks.extend(tasks[priority])
+import math
+import pytz
+
+def order_tasks(tasks:dict,verbose=False):
+    unordered_tasks=[]
+    for priority in tasks.keys():
+        for a in tasks[priority]:
+            tz=datetime.fromisoformat(a.get('dueDateTime', {}).get('dateTime', (datetime.fromisoformat(a['lastModifiedDateTime']) + timedelta(days=15)).isoformat()))
+            if tz.tzinfo is None:
+                tz = tz.replace(tzinfo=pytz.UTC)
+            unordered_tasks.append({"importance":a.get('importance', 'normal'),"dueDate":tz,"priority":priority,"task":a})
+    
+    max_priority = max(tasks.keys())
+    min_priority = min(tasks.keys())
+    def orderindex(x): 
+        importance_score=1 if x["importance"]=="normal" else  2
+        day_difference = (x["dueDate"]-datetime.now().replace(tzinfo=pytz.UTC)).days
+        time_score=math.exp(-day_difference)
+        priority_score=1-(x["priority"]-min_priority)/(max_priority-min_priority)
+        index=(importance_score)*time_score*(priority_score)
+        if verbose:
+            print(x["task"]["title"] )
+            print(x["importance"]+ " importance : "+importance_score)
+            print(day_difference)
+            print(str(x["priority"])+" - "+str(priority_score))
+            print(index)
+            print()
+        return index
+    ordered_tasks=sorted(unordered_tasks, key=orderindex, reverse=True)
     return ordered_tasks
 
 @app.post("/schedule/")
@@ -172,7 +198,7 @@ def upload_calendar():
     events=get_events()
     tasks=order_tasks(get_uncompleted_tasks())
     existing_event_summaries = [event['subject'] for event in events.get('value', [])]
-    new_tasks = [task for task in tasks if task["title"] not in existing_event_summaries]
+    new_tasks = [task["task"] for task in tasks if task["task"]["title"] not in existing_event_summaries]
     
     busy_times = [(datetime.fromisoformat(event['start']['dateTime']), datetime.fromisoformat(event['end']['dateTime'])) for event in events.get('value', [])]
     busy_times.sort()
@@ -229,7 +255,7 @@ def get_uncompleted_tasks():
         tasks[priority] = [task for task in tasks[priority] if task['status'] != 'completed']
     return tasks
 
-CONFIG = {"business_hours": [7, 18],"wake_hours": [5,21 ]}
+CONFIG = {"wake_hours": [5,21]}
 
 @app.post("/config/")
 def save_config(config: dict):
