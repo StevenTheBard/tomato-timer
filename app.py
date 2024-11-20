@@ -184,7 +184,7 @@ def order_tasks(tasks:dict,verbose=False):
         index=(importance_score)*time_score*(priority_score)
         if verbose:
             print(x["task"]["title"] )
-            print(x["importance"]+ " importance : "+importance_score)
+            print(x["importance"]+ " importance : "+str(importance_score))
             print(day_difference)
             print(str(x["priority"])+" - "+str(priority_score))
             print(index)
@@ -267,3 +267,33 @@ def save_config(config: dict):
 def get_config():
     global CONFIG
     return CONFIG
+
+@app.get("/calendar/scheduled")
+def scheduled():
+    events = get_events()
+    scheduled_tasks = [event for event in events.get('value', []) if event.get('bodyPreview') == "created by tomato-timer"]
+    return {"scheduled_tasks": scheduled_tasks}
+
+@app.post("/calendar/reset")
+def reset_scheduled_events():
+    events = scheduled().get('scheduled_tasks', [])
+    access_token = os.getenv('OUTLOOK_ACCESS_TOKEN')
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Access token is missing")
+
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+    deleted=[]
+    for event in events:
+        event_id = event['id']
+        url = f"https://graph.microsoft.com/v1.0/me/events/{event_id}"
+        response = requests.delete(url, headers=headers)
+        if response.status_code != 204:
+            raise HTTPException(status_code=response.status_code, detail=response.json())
+        else: 
+            deleted.append(event["subject"])
+    return {"status": deleted}
+
+reset_scheduled_events()
