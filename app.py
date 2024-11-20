@@ -153,10 +153,24 @@ def schedule_event(task, busy_times):
     busy_times.append((free_start, free_end))
     return busy_times
 
+@app.get("/order/")
+def order():
+    return [i["title"] for i in order_tasks(get_uncompleted_tasks())]
+
+def order_tasks(tasks:dict):
+    ordered_tasks=[]
+    for priority in sorted(tasks.keys()):
+        tasks[priority] = sorted(tasks[priority], key=lambda x: (
+            x.get('importance', 'normal'), 
+            x.get('dueDateTime', {}).get('dateTime', (datetime.fromisoformat(x['lastModifiedDateTime']) + timedelta(days=15)).isoformat())
+        ))
+        ordered_tasks.extend(tasks[priority])
+    return ordered_tasks
+
 @app.post("/schedule/")
 def upload_calendar():
     events=get_events()
-    tasks=get_uncompleted_tasks()
+    tasks=order_tasks(get_uncompleted_tasks())
     existing_event_summaries = [event['subject'] for event in events.get('value', [])]
     new_tasks = [task for task in tasks if task["title"] not in existing_event_summaries]
     
@@ -189,25 +203,31 @@ def get_all_tasks():
     if response.status_code == 200:
         lists = response.json().get('value', [])
         tasks = []
+        tasks_dict = {}
         for todo_list in lists:
-            if  re.search(r'(\d+)-',todo_list['displayName']):
+            match = re.search(r'(\d+)-', todo_list['displayName'])
+            if match:
+                priority = int(match.group(1))
                 list_id = todo_list['id']
                 tasks_url = f"https://graph.microsoft.com/v1.0/me/todo/lists/{list_id}/tasks"
                 tasks_response = requests.get(tasks_url, headers=headers)
                 if tasks_response.status_code == 200:
-                    tasks.extend(tasks_response.json().get('value', []))
+                    tasks = tasks_response.json().get('value', [])
+                    if priority not in tasks_dict:
+                        tasks_dict[priority] = []
+                    tasks_dict[priority].extend(tasks)
                 else:
                     raise HTTPException(status_code=tasks_response.status_code, detail=tasks_response.json())
-        return tasks
+        return tasks_dict
     else:
         raise HTTPException(status_code=response.status_code, detail=response.json())
 
 @app.get("/todo/")
 def get_uncompleted_tasks():
     tasks=get_all_tasks()
-    incomplete_tasks = [task for task in tasks if task['status'] != 'completed']
-    sorted_tasks = sorted(incomplete_tasks, key=lambda x: x['importance'], reverse=False)
-    return sorted_tasks
+    for priority in tasks:
+        tasks[priority] = [task for task in tasks[priority] if task['status'] != 'completed']
+    return tasks
 
 CONFIG = {"business_hours": [7, 18],"wake_hours": [5,21 ]}
 
