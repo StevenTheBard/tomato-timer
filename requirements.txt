@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+icalendar
+requests
+python-dotenv
+pytz
